@@ -14,11 +14,6 @@
       </p>
 
       <section class="card">
-        <h2>静态资源测试</h2>
-        <p>刷新页面或多次请求 <code>/style.css</code>、<code>/app.js</code> 即可验证静态资源由 Nginx 处理。</p>
-      </section>
-
-      <section class="card">
         <h2>商品详情缓存测试</h2>
         <div class="controls">
           <button data-product="1">查询商品 1</button>
@@ -27,6 +22,25 @@
           <button id="burst">并发请求商品 1 (20 次)</button>
         </div>
         <pre id="result">点击按钮后显示结果...</pre>
+      </section>
+
+      <section class="card">
+        <h2>ElasticSearch 商品搜索</h2>
+        <div class="controls">
+          <input type="text" id="search-input" placeholder="输入关键词搜索商品..." />
+          <button id="search-btn">搜索</button>
+        </div>
+        <pre id="search-result">输入关键词后点击搜索...</pre>
+      </section>
+
+      <section class="card">
+        <h2>MySQL 读写分离测试</h2>
+        <p>点击按钮会向 Master 写入一条测试数据，然后分别从 Master 和 Slave 读取，验证主从复制效果。</p>
+        <div class="controls">
+          <button id="rw-test">执行读写分离测试</button>
+          <button id="add-product">写入新商品 (Master)</button>
+        </div>
+        <pre id="rw-result">点击按钮后显示结果...</pre>
       </section>
 
       <section class="card">

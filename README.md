@@ -1,11 +1,13 @@
 # 高并发读实验项目
 
-本项目用于完成“高并发读”作业，包含以下四部分：
+本项目用于完成"高并发读"作业，包含以下六部分：
 
-1. 容器环境：使用 `Dockerfile` 和 `docker-compose.yml` 启动 Redis、两个后端实例和 Nginx。
-2. 负载均衡：Nginx 反向代理两个后端实例，默认使用轮询算法。
-3. 动静分离：静态页面由 Nginx 直接提供，接口请求转发给后端。
-4. 分布式缓存：使用 Redis 缓存商品详情，并处理缓存穿透、击穿、雪崩问题。
+1. **容器环境**：Dockerfile + docker-compose 启动所有服务。
+2. **负载均衡**：Nginx 反向代理两个后端实例，支持多种算法。
+3. **动静分离**：静态页面由 Nginx 直接提供，接口请求转发给后端。
+4. **分布式缓存**：Redis 缓存商品详情，处理穿透、击穿、雪崩。
+5. **读写分离**：MySQL 主从复制，写入走 Master，读取走 Slave。
+6. **商品搜索**：ElasticSearch 全文搜索商品。
 
 ## 一、项目结构
 
@@ -15,6 +17,11 @@ high-concurrency-demo
 │  ├─ Dockerfile
 │  ├─ package.json
 │  └─ server.js
+├─ mysql
+│  ├─ master/my.cnf
+│  ├─ slave/my.cnf
+│  ├─ init/01-schema.sql
+│  └─ slave-init/01-start-replication.sh
 ├─ nginx
 │  ├─ nginx.conf
 │  └─ html
@@ -25,60 +32,50 @@ high-concurrency-demo
 └─ README.md
 ```
 
-## 二、功能说明
+## 二、服务说明
 
-### 1. 容器环境
-
-- `redis`：缓存服务。
-- `backend1`：第一个后端实例，对外映射到 `8081`。
-- `backend2`：第二个后端实例，对外映射到 `8082`。
-- `nginx`：统一入口，对外映射到 `80`。
-
-### 2. 负载均衡
-
-Nginx 将 `/api/*` 请求转发到两个后端实例：
-
-- 默认：轮询（Round Robin）
-- 可选：`least_conn`
-- 可选：`ip_hash`
-
-修改位置：`nginx/nginx.conf`
-
-### 3. 动静分离
-
-- `/`、`/index.html`、`/style.css`、`/app.js` 等静态资源由 Nginx 直接处理。
-- `/api/*` 动态接口由 Nginx 转发到后端服务。
-
-### 4. 分布式缓存
-
-接口：`GET /api/products/:id`
-
-缓存策略：
-
-- 缓存命中：直接从 Redis 返回。
-- 缓存穿透：空商品写入短期空值缓存。
-- 缓存击穿：使用 Redis 分布式锁控制热点 Key 重建。
-- 缓存雪崩：给缓存 TTL 增加随机值，避免同一时刻大量失效。
+| 服务 | 容器名 | 端口 | 说明 |
+|------|--------|------|------|
+| Redis | hc-redis | 6379 | 缓存 |
+| MySQL Master | hc-mysql-master | 3306 | 主库（写） |
+| MySQL Slave | hc-mysql-slave | 3307 | 从库（读） |
+| ElasticSearch | hc-elasticsearch | 9200 | 全文搜索 |
+| 后端 1 | hc-backend-1 | 8081 | 业务服务 |
+| 后端 2 | hc-backend-2 | 8082 | 业务服务 |
+| Nginx | hc-nginx | 80 | 反向代理入口 |
 
 ## 三、启动方式
-
-先确保已安装：
-
-- Docker Desktop
-- Docker Compose（Docker Desktop 一般已内置）
-
-在项目根目录执行：
 
 ```bash
 docker compose up --build
 ```
 
-启动后访问：
+启动后需要手动配置 MySQL 主从复制（首次）：
+
+```bash
+# 进入从库容器
+docker exec -it hc-mysql-slave bash
+
+# 在从库中执行
+mysql -u root -prootpass -e "
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST='mysql-master',
+  SOURCE_USER='repl',
+  SOURCE_PASSWORD='repl_pass',
+  SOURCE_AUTO_POSITION=1;
+START REPLICA;
+"
+
+# 验证复制状态
+mysql -u root -prootpass -e "SHOW REPLICA STATUS\G"
+```
+
+看到 `Replica_IO_Running: Yes` 和 `Replica_SQL_Running: Yes` 即表示主从复制成功。
+
+访问：
 
 - 前端页面：[http://localhost](http://localhost)
-- 后端 1：[http://localhost:8081/api/health](http://localhost:8081/api/health)
-- 后端 2：[http://localhost:8082/api/health](http://localhost:8082/api/health)
-- Nginx 统一入口：[http://localhost/api/health](http://localhost/api/health)
+- 健康检查：[http://localhost/api/health](http://localhost/api/health)
 
 停止服务：
 
@@ -86,144 +83,101 @@ docker compose up --build
 docker compose down
 ```
 
-## 四、验证方法
-
-### 1. 验证容器环境
-
-执行：
+清除数据卷（重置数据库）：
 
 ```bash
-docker compose ps
+docker compose down -v
 ```
 
-预期结果：看到 `redis`、`backend1`、`backend2`、`nginx` 四个服务正常运行。
+## 四、功能验证
 
-### 2. 验证负载均衡
+### 1. 负载均衡
 
-多次访问：
+多次访问 `/api/products/1`，观察返回的 `instance` 在 `backend-1` 和 `backend-2` 之间交替。
+
+### 2. 动静分离
+
+- 浏览器访问 `http://localhost/` → Nginx 返回静态页面
+- 访问 `http://localhost/api/products/1` → Nginx 转发到后端
+
+### 3. 分布式缓存
+
+- 第一次请求：`source` 为 `mysql-slave-rebuild-cache`（从 MySQL 从库读取后写入 Redis）
+- 第二次请求：`source` 为 `redis-cache`（直接命中缓存）
+- 请求不存在的商品：返回 404，写入空值缓存防止穿透
+
+### 4. MySQL 读写分离
+
+页面上点击「执行读写分离测试」按钮，或直接访问：
 
 ```bash
-curl http://localhost/api/health
+curl http://localhost/api/rw-test
 ```
 
-或：
+返回结果会显示：
+- 写入目标：`mysql-master`
+- Master 读取：找到数据
+- Slave 读取：找到数据（如果主从复制已同步）
+
+也可以用「写入新商品 (Master)」按钮向主库写入数据，然后查询验证数据已同步到从库。
+
+### 5. ElasticSearch 搜索
+
+在页面搜索框输入关键词（如 `cache`、`nginx`、`mysql`），点击搜索按钮。
+
+或直接访问：
 
 ```bash
-curl http://localhost/api/products/1
+curl "http://localhost/api/search?q=cache"
 ```
 
-观察返回中的 `instance` 字段是否在 `backend-1` 和 `backend-2` 之间切换。
+## 五、API 接口
 
-### 3. 验证动静分离
-
-浏览器访问：
-
-- `http://localhost/`
-- `http://localhost/style.css`
-- `http://localhost/app.js`
-
-说明静态资源由 Nginx 直接返回。
-
-再访问：
-
-- `http://localhost/api/products/1`
-
-说明动态请求被代理到后端。
-
-### 4. 验证分布式缓存
-
-第一次请求商品详情：
-
-```bash
-curl http://localhost/api/products/1
-```
-
-预期：`source` 可能是 `database-rebuild-cache`。
-
-再次请求相同商品：
-
-```bash
-curl http://localhost/api/products/1
-```
-
-预期：`source` 变成 `redis-cache` 或 `redis-cache-after-wait`。
-
-请求不存在的商品：
-
-```bash
-curl http://localhost/api/products/999
-```
-
-预期：返回 404，并触发空值缓存，避免缓存穿透。
-
-## 五、JMeter 测试建议
-
-可以创建两个线程组，分别测试：
-
-1. 静态资源：`GET http://localhost/style.css`
-2. 动态接口：`GET http://localhost/api/products/1`
-
-推荐参数：
-
-- 线程数：50 或 100
-- Ramp-Up：1~5 秒
-- 循环次数：20
-
-观察指标：
-
-- 吞吐量
-- 平均响应时间
-- 95% 响应时间
-- 错误率
-
-并结合下面命令查看日志：
-
-```bash
-docker compose logs -f backend1 backend2 nginx
-```
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | /api/health | 健康检查（含各组件状态） |
+| GET | /api/products | 获取所有商品（从 Slave 读） |
+| GET | /api/products/:id | 获取单个商品（Redis 缓存 + Slave 读） |
+| POST | /api/products | 新增商品（写入 Master） |
+| PUT | /api/products/:id | 更新商品（写入 Master） |
+| GET | /api/search?q=xxx | ElasticSearch 全文搜索 |
+| GET | /api/rw-test | 读写分离自动化测试 |
 
 ## 六、切换负载均衡算法
 
-编辑 `nginx/nginx.conf` 中的 `upstream backend_pool`：
+编辑 `nginx/nginx.conf` 中的 `upstream backend_pool`，可选：
 
-默认轮询：
+- 默认轮询（Round Robin）
+- `least_conn`（最少连接）
+- `ip_hash`（IP 哈希）
 
-```nginx
-upstream backend_pool {
-  server backend1:3000;
-  server backend2:3000;
-}
-```
-
-最少连接：
-
-```nginx
-upstream backend_pool {
-  least_conn;
-  server backend1:3000;
-  server backend2:3000;
-}
-```
-
-IP Hash：
-
-```nginx
-upstream backend_pool {
-  ip_hash;
-  server backend1:3000;
-  server backend2:3000;
-}
-```
-
-修改后重启：
+修改后重启 Nginx：
 
 ```bash
 docker compose restart nginx
 ```
 
-## 七、可直接写进实验报告的结论
+## 七、JMeter 测试建议
 
-- 通过 Docker Compose 将 Redis、后端服务和 Nginx 统一容器化部署，简化了实验环境搭建。
-- 使用 Nginx 对两个后端实例进行反向代理和负载均衡，能够分散请求压力。
-- 静态资源由 Nginx 直接处理，动态接口再转发给后端，实现了动静分离。
-- 利用 Redis 缓存商品详情，并通过空值缓存、分布式锁、随机过期时间分别缓解缓存穿透、击穿和雪崩问题。
+创建线程组分别测试：
+
+1. 静态资源：`GET http://localhost/style.css`
+2. 动态接口：`GET http://localhost/api/products/1`
+3. 搜索接口：`GET http://localhost/api/search?q=cache`
+
+推荐参数：线程数 50~100，Ramp-Up 1~5 秒，循环 20 次。
+
+查看日志：
+
+```bash
+docker compose logs -f backend1 backend2
+```
+
+## 八、实验结论
+
+- 通过 Docker Compose 将 Redis、MySQL 主从、ElasticSearch、后端服务和 Nginx 统一容器化部署。
+- Nginx 对两个后端实例进行反向代理和负载均衡，分散请求压力。
+- 静态资源由 Nginx 直接处理，动态接口转发给后端，实现动静分离。
+- Redis 缓存商品详情，通过空值缓存、分布式锁、随机过期时间缓解穿透、击穿和雪崩。
+- MySQL 主从复制实现读写分离：写操作走 Master，读操作走 Slave，降低主库压力。
+- ElasticSearch 提供全文搜索功能，支持按商品名称和描述模糊匹配。
