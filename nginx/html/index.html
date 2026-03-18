@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>高并发读实验演示</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>高并发读实验演示</h1>
+      <p class="desc">
+        该页面由 Nginx 直接提供，接口请求会被反向代理到两个后端实例，从而同时演示动静分离和负载均衡。
+      </p>
+
+      <section class="card">
+        <h2>静态资源测试</h2>
+        <p>刷新页面或多次请求 <code>/style.css</code>、<code>/app.js</code> 即可验证静态资源由 Nginx 处理。</p>
+      </section>
+
+      <section class="card">
+        <h2>商品详情缓存测试</h2>
+        <div class="controls">
+          <button data-product="1">查询商品 1</button>
+          <button data-product="2">查询商品 2</button>
+          <button data-product="3">查询商品 3</button>
+          <button id="burst">并发请求商品 1 (20 次)</button>
+        </div>
+        <pre id="result">点击按钮后显示结果...</pre>
+      </section>
+
+      <section class="card">
+        <h2>健康检查</h2>
+        <button id="health">查看后端状态</button>
+        <pre id="health-result">点击按钮后显示结果...</pre>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
