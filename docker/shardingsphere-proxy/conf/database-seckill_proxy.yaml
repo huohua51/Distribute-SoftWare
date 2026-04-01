@@ -1,0 +1,48 @@
+databaseName: seckill_proxy
+
+dataSources:
+  ds_0:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://mysql:3306/order_ds_0?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    maxPoolSize: 10
+  ds_1:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://mysql:3306/order_ds_1?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    maxPoolSize: 10
+
+rules:
+  - !SHARDING
+    tables:
+      orders:
+        actualDataNodes: ds_$->{0..1}.orders_$->{0..1}
+        databaseStrategy:
+          standard:
+            shardingColumn: user_id
+            shardingAlgorithmName: order-database-inline
+        tableStrategy:
+          standard:
+            shardingColumn: order_id
+            shardingAlgorithmName: order-table-inline
+    shardingAlgorithms:
+      order-database-inline:
+        type: INLINE
+        props:
+          algorithm-expression: ds_$->{user_id % 2}
+      order-table-inline:
+        type: INLINE
+        props:
+          algorithm-expression: orders_$->{order_id % 2}
+  - !SINGLE
+    tables:
+      - ds_0.product_stock
+      - ds_0.order_task
+    defaultDataSource: ds_0
+
+props:
+  sql-show: true

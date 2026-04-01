@@ -1,0 +1,14 @@
+mode:
+  type: Standalone
+  repository:
+    type: JDBC
+
+authority:
+  users:
+    - root@%:root
+  privilege:
+    type: ALL_PERMITTED
+
+props:
+  sql-show: true
+  proxy-default-port: 3307

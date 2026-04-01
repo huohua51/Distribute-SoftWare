@@ -1,0 +1,15 @@
+spring:
+  config:
+    activate:
+      on-profile: sharding
+  datasource:
+    url: jdbc:mysql://localhost:3307/seckill_proxy?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+app:
+  sharding:
+    mode: proxy
+    database-name: seckill_proxy
+    description: 使用 ShardingSphere-Proxy，对 orders 逻辑表按 user_id 分库、按 order_id 分表
