@@ -25,7 +25,7 @@
 
 ## 已提供文件
 
-- `src/main/resources/application-sharding.yml`
+- `seckill-seckill-service/src/main/resources/application-sharding.yml`
   Spring Boot 在 `sharding` profile 下连接 ShardingSphere-Proxy。
 - `docs/sharding/proxy-config.yaml`
   Proxy 的逻辑库与分片规则配置。
@@ -64,7 +64,7 @@ docker compose up -d --build
 ### 3. 使用分片 profile 启动应用
 
 ```bash
-mvn spring-boot:run -Dspring-boot.run.profiles=sharding
+mvn -pl seckill-seckill-service spring-boot:run -Dspring-boot.run.profiles=sharding
 ```
 
 应用连接的是 Proxy：

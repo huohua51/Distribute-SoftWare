@@ -53,15 +53,32 @@
 ## 项目结构
 
 ```text
-src/main/java/com/example/seckill
-├── config        # Kafka topic 配置
-├── controller    # 接口层
-├── dto           # 请求与响应对象
-├── entity        # 数据对象
-├── mapper        # MyBatis Mapper
-├── mq            # Kafka 消息定义与消费者
-├── service       # 业务服务
-└── support       # 雪花 ID、异常、状态、Redis Key
+homework4
+├─ docs
+├─ docker
+├─ load
+├─ nginx
+├─ scripts
+├─ seckill-common
+├─ seckill-user-service
+├─ seckill-product-service
+├─ seckill-inventory-service
+├─ seckill-order-service
+└─ seckill-seckill-service
+```
+
+当前已完成的核心代码位于：
+
+```text
+seckill-seckill-service/src/main/java/com/example/seckill
+├── config
+├── controller
+├── dto
+├── entity
+├── mapper
+├── mq
+├── service
+└── support
 ```
 
 ## 运行前准备
@@ -72,7 +89,7 @@ src/main/java/com/example/seckill
 - `Redis`
 - `Kafka`
 
-默认配置在 `src/main/resources/application.yml`：
+默认配置在 `seckill-seckill-service/src/main/resources/application.yml`：
 
 - MySQL: `localhost:3306/seckill_demo`
 - Redis: `localhost:6379`
@@ -90,13 +107,13 @@ create database seckill_demo default character set utf8mb4;
 再执行：
 
 ```text
-src/main/resources/schema.sql
+seckill-seckill-service/src/main/resources/schema.sql
 ```
 
 ## 启动项目
 
 ```bash
-mvn spring-boot:run
+mvn -pl seckill-seckill-service spring-boot:run
 ```
 
 ## Docker 一键启动中间件
@@ -124,7 +141,7 @@ docker compose up -d --build
 如果你要走分库分表版本，直接使用：
 
 ```bash
-mvn spring-boot:run -Dspring-boot.run.profiles=sharding
+mvn -pl seckill-seckill-service spring-boot:run -Dspring-boot.run.profiles=sharding
 ```
 
 此时应用会连接：
@@ -199,7 +216,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=sharding
 3. 通过分片 profile 启动应用：
 
 ```bash
-mvn spring-boot:run -Dspring-boot.run.profiles=sharding
+mvn -pl seckill-seckill-service spring-boot:run -Dspring-boot.run.profiles=sharding
 ```
 
 详细说明见：
