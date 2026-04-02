@@ -9,6 +9,7 @@
 - 幂等控制：同一用户同一商品只允许秒杀一次
 - 数据一致性：缓存预扣减 + 数据库最终扣减 + 失败补偿，避免超卖
 - 选做：已提供 `ShardingSphere-Proxy` 分库分表实现
+- homework5：已增强为订单、库存、支付独立服务的消息一致性版本
 
 ## 技术栈
 
@@ -64,6 +65,7 @@ homework4
 ├─ seckill-product-service
 ├─ seckill-inventory-service
 ├─ seckill-order-service
+├─ seckill-payment-service
 └─ seckill-seckill-service
 ```
 
@@ -88,8 +90,16 @@ seckill-seckill-service/src/main/java/com/example/seckill
 - `MySQL 8+`
 - `Redis`
 - `Kafka`
+- `ShardingSphere-Proxy`（订单服务走分片库时使用）
 
-默认配置在 `seckill-seckill-service/src/main/resources/application.yml`：
+各服务默认端口：
+
+- `seckill-seckill-service`: `8080`
+- `seckill-inventory-service`: `8081`
+- `seckill-order-service`: `8082`
+- `seckill-payment-service`: `8083`
+
+网关服务配置在 `seckill-seckill-service/src/main/resources/application.yml`：
 
 - MySQL: `localhost:3306/seckill_demo`
 - Redis: `localhost:6379`
@@ -113,6 +123,9 @@ seckill-seckill-service/src/main/resources/schema.sql
 ## 启动项目
 
 ```bash
+mvn -pl seckill-inventory-service spring-boot:run
+mvn -pl seckill-order-service spring-boot:run
+mvn -pl seckill-payment-service spring-boot:run
 mvn -pl seckill-seckill-service spring-boot:run
 ```
 
@@ -138,15 +151,29 @@ docker compose up -d --build
 - Kafka: `9092`
 - ShardingSphere-Proxy: `3307`
 
-如果你要走分库分表版本，直接使用：
+如果你要走订单分库分表版本，先启动 `ShardingSphere-Proxy`，再启动：
 
 ```bash
-mvn -pl seckill-seckill-service spring-boot:run -Dspring-boot.run.profiles=sharding
+mvn -pl seckill-order-service spring-boot:run
 ```
 
-此时应用会连接：
+订单服务会连接：
 
 - `jdbc:mysql://localhost:3307/seckill_proxy`
+
+## homework5 增强点
+
+当前已经补上：
+
+- `inventory-service` 独立服务，拥有自己的 `inventory_db`
+- `order-service` 独立服务，通过 `ShardingSphere-Proxy` 连接订单分片库
+- `payment-service` 独立服务，拥有自己的 `payment_db`
+- 秒杀入口服务通过 HTTP 调用库存、订单、支付服务
+- 下单后发送 `order-create-topic`
+- 订单服务创建订单后发送 `inventory-deduct-topic`
+- 库存服务消费后发送 `inventory-deduct-result-topic`
+- 支付服务支付成功后发送 `payment-result-topic`
+- 订单服务消费支付结果后更新订单状态为 `PAID`
 
 ## 接口示例
 
@@ -198,6 +225,10 @@ mvn -pl seckill-seckill-service spring-boot:run -Dspring-boot.run.profiles=shard
 ### 5. 按用户 ID 查询
 
 `GET /api/seckill/orders?userId=1`
+
+### 6. 支付订单
+
+`POST /api/seckill/orders/{orderId}/pay?userId=1&amountFen=100`
 
 ## ShardingSphere 分库分表
 

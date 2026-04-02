@@ -36,8 +36,10 @@ mybatis:
     map-underscore-to-camel-case: true
 
 app:
-  kafka:
-    order-topic: seckill-order-topic
   snowflake:
     worker-id: 1
     datacenter-id: 1
+  services:
+    inventory-url: http://localhost:8081
+    order-url: http://localhost:8082
+    payment-url: http://localhost:8083

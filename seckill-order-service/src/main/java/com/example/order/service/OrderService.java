@@ -20,4 +20,6 @@ public interface OrderService {
     void updateTaskStatus(String messageId, String taskStatus, String failReason);
 
     void createOrder(OrderDO order);
+
+    void updateOrderStatus(Long orderId, String status);
 }

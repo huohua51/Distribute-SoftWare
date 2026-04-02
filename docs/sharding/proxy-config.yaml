@@ -40,9 +40,6 @@ rules:
           algorithm-expression: orders_$->{order_id % 2}
   - !SINGLE
     tables:
-      - ds_0.user_account
-      - ds_0.product
-      - ds_0.product_stock
       - ds_0.order_task
     defaultDataSource: ds_0
 

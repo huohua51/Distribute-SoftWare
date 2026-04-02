@@ -1,0 +1,32 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: seckill-order-service
+  datasource:
+    url: jdbc:mysql://localhost:3307/seckill_proxy?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      group-id: order-service-group
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+
+app:
+  kafka:
+    order-create-topic: order-create-topic
+    inventory-deduct-topic: inventory-deduct-topic
+    inventory-result-topic: inventory-deduct-result-topic
+    payment-result-topic: payment-result-topic

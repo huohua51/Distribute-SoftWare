@@ -70,4 +70,9 @@ public class OrderServiceImpl implements OrderService {
     public void createOrder(OrderDO order) {
         orderMapper.insert(order);
     }
+
+    @Override
+    public void updateOrderStatus(Long orderId, String status) {
+        orderMapper.updateStatus(orderId, status);
+    }
 }

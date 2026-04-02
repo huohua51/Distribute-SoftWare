@@ -1,7 +1,10 @@
+create database if not exists seckill_demo default character set utf8mb4;
+create database if not exists inventory_db default character set utf8mb4;
+create database if not exists payment_db default character set utf8mb4;
 create database if not exists order_ds_0 default character set utf8mb4;
 create database if not exists order_ds_1 default character set utf8mb4;
 
-use order_ds_0;
+use seckill_demo;
 
 create table if not exists user_account (
     id bigint not null auto_increment primary key,
@@ -23,6 +26,8 @@ create table if not exists product (
     unique key uk_product_id (product_id)
 );
 
+use inventory_db;
+
 create table if not exists product_stock (
     id bigint not null auto_increment primary key,
     product_id bigint not null,
@@ -33,6 +38,38 @@ create table if not exists product_stock (
     updated_at datetime not null default current_timestamp on update current_timestamp,
     unique key uk_product_id (product_id)
 );
+
+create table if not exists inventory_task (
+    id bigint not null auto_increment primary key,
+    message_id varchar(64) not null,
+    order_id bigint not null,
+    user_id bigint not null,
+    product_id bigint not null,
+    task_status varchar(32) not null,
+    fail_reason varchar(255) null,
+    created_at datetime not null default current_timestamp,
+    updated_at datetime not null default current_timestamp on update current_timestamp,
+    unique key uk_message_id (message_id),
+    key idx_order_id (order_id)
+);
+
+use payment_db;
+
+create table if not exists payment_record (
+    id bigint not null auto_increment primary key,
+    payment_id bigint not null,
+    order_id bigint not null,
+    user_id bigint not null,
+    amount_fen bigint not null,
+    payment_status varchar(32) not null,
+    fail_reason varchar(255) null,
+    created_at datetime not null default current_timestamp,
+    updated_at datetime not null default current_timestamp on update current_timestamp,
+    unique key uk_payment_id (payment_id),
+    unique key uk_order_id (order_id)
+);
+
+use order_ds_0;
 
 create table if not exists order_task (
     id bigint not null auto_increment primary key,

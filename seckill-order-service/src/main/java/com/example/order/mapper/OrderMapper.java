@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface OrderMapper {
@@ -39,4 +40,12 @@ public interface OrderMapper {
             limit 1
             """)
     OrderDO findByUserIdAndProductId(@Param("userId") Long userId, @Param("productId") Long productId);
+
+    @Update("""
+            update orders
+            set status = #{status},
+                updated_at = now()
+            where order_id = #{orderId}
+            """)
+    int updateStatus(@Param("orderId") Long orderId, @Param("status") String status);
 }

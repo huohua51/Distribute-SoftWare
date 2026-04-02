@@ -23,6 +23,7 @@
         <module>seckill-product-service</module>
         <module>seckill-inventory-service</module>
         <module>seckill-order-service</module>
+        <module>seckill-payment-service</module>
         <module>seckill-seckill-service</module>
     </modules>
 

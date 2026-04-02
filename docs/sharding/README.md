@@ -1,6 +1,6 @@
 # ShardingSphere-Proxy 分库分表
 
-本项目使用 `ShardingSphere-Proxy` 对订单表做分库分表，应用代码仍然面向逻辑表 `orders` 编写，不需要修改 `Mapper` SQL。
+本项目使用 `ShardingSphere-Proxy` 对订单表做分库分表，当前由 `seckill-order-service` 连接 Proxy 并直接操作逻辑表 `orders`。
 
 ## 分片规则
 
@@ -61,13 +61,13 @@
 docker compose up -d --build
 ```
 
-### 3. 使用分片 profile 启动应用
+### 3. 启动订单服务
 
 ```bash
-mvn -pl seckill-seckill-service spring-boot:run -Dspring-boot.run.profiles=sharding
+mvn -pl seckill-order-service spring-boot:run
 ```
 
-应用连接的是 Proxy：
+订单服务连接的是 Proxy：
 
 - 地址：`jdbc:mysql://localhost:3307/seckill_proxy`
 

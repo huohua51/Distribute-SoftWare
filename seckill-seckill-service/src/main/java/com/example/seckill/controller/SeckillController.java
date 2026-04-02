@@ -3,6 +3,7 @@ package com.example.seckill.controller;
 import com.example.common.dto.ApiResponse;
 import com.example.common.dto.CreateProductRequest;
 import com.example.common.dto.OrderQueryResponse;
+import com.example.common.dto.PayOrderResponse;
 import com.example.common.dto.SeckillOrderRequest;
 import com.example.common.dto.StockResponse;
 import com.example.seckill.service.SeckillService;
@@ -54,5 +55,12 @@ public class SeckillController {
     @GetMapping("/orders")
     public ApiResponse<List<OrderQueryResponse>> queryByUserId(@RequestParam @NotNull Long userId) {
         return ApiResponse.success(seckillService.queryOrdersByUserId(userId));
+    }
+
+    @PostMapping("/orders/{orderId}/pay")
+    public ApiResponse<PayOrderResponse> payOrder(@PathVariable Long orderId,
+                                                  @RequestParam Long userId,
+                                                  @RequestParam(defaultValue = "1") Long amountFen) {
+        return ApiResponse.success("支付请求已受理", seckillService.payOrder(orderId, userId, amountFen));
     }
 }
