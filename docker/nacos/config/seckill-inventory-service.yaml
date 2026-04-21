@@ -1,0 +1,11 @@
+spring:
+  datasource:
+    url: jdbc:mysql://mysql:3306/inventory_db?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+
+app:
+  runtime:
+    message: hello from nacos inventory-service
+  limit:
+    internal-qps: 80

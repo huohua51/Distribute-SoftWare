@@ -1,101 +1,256 @@
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: hc-redis
-    ports:
-      - "6379:6379"
-
-  mysql-master:
-    image: mysql:8.0
-    container_name: hc-mysql-master
+  mysql:
+    image: mysql:8.4
+    container_name: homework4-mysql
+    restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_ROOT_PASSWORD: root
+      TZ: Asia/Shanghai
     ports:
       - "3306:3306"
     volumes:
-      - ./mysql/master/my.cnf:/etc/mysql/conf.d/master.cnf:ro
-      - ./mysql/init:/docker-entrypoint-initdb.d:ro
-      - mysql-master-data:/var/lib/mysql
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
 
-  mysql-slave:
-    image: mysql:8.0
-    container_name: hc-mysql-slave
-    environment:
-      MYSQL_ROOT_PASSWORD: rootpass
+  redis:
+    image: redis:7.4-alpine
+    container_name: homework4-redis
+    restart: unless-stopped
     ports:
-      - "3307:3306"
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - ./mysql/slave/my.cnf:/etc/mysql/conf.d/slave.cnf:ro
-      - mysql-slave-data:/var/lib/mysql
-    depends_on:
-      - mysql-master
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  elasticsearch:
-    image: elasticsearch:8.13.0
-    container_name: hc-elasticsearch
+  kafka:
+    image: bitnami/kafka:4.0
+    container_name: homework4-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
     environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms256m -Xmx256m"
-    ports:
-      - "9200:9200"
-
-  backend1:
-    build:
-      context: ./backend
-    container_name: hc-backend-1
-    environment:
-      PORT: 3000
-      INSTANCE_NAME: backend-1
-      REDIS_URL: redis://redis:6379
-      MYSQL_MASTER_HOST: mysql-master
-      MYSQL_SLAVE_HOST: mysql-slave
-      MYSQL_USER: root
-      MYSQL_PASSWORD: rootpass
-      MYSQL_DATABASE: shop
-      ES_HOST: http://elasticsearch:9200
-    depends_on:
-      - redis
-      - mysql-master
-      - mysql-slave
-      - elasticsearch
-    ports:
-      - "8081:3000"
-
-  backend2:
-    build:
-      context: ./backend
-    container_name: hc-backend-2
-    environment:
-      PORT: 3000
-      INSTANCE_NAME: backend-2
-      REDIS_URL: redis://redis:6379
-      MYSQL_MASTER_HOST: mysql-master
-      MYSQL_SLAVE_HOST: mysql-slave
-      MYSQL_USER: root
-      MYSQL_PASSWORD: rootpass
-      MYSQL_DATABASE: shop
-      ES_HOST: http://elasticsearch:9200
-    depends_on:
-      - redis
-      - mysql-master
-      - mysql-slave
-      - elasticsearch
-    ports:
-      - "8082:3000"
-
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: hc-nginx
-    depends_on:
-      - backend1
-      - backend2
-    ports:
-      - "80:80"
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_KRAFT_CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      ALLOW_PLAINTEXT_LISTENER: "yes"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/html:/usr/share/nginx/html:ro
+      - kafka_data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --list > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+  shardingsphere-proxy:
+    build:
+      context: .
+      dockerfile: docker/shardingsphere-proxy/Dockerfile
+    container_name: homework4-shardingsphere-proxy
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      PORT: 3307
+    ports:
+      - "3307:3307"
+    volumes:
+      - ./docker/shardingsphere-proxy/conf:/opt/shardingsphere-proxy/conf
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/3307'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: homework4-nacos
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      PREFER_HOST_MODE: hostname
+      NACOS_AUTH_ENABLE: "false"
+      JVM_XMS: 256m
+      JVM_XMX: 256m
+      JVM_XMN: 128m
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+
+  sentinel-dashboard:
+    build:
+      context: .
+      dockerfile: docker/sentinel-dashboard/Dockerfile
+    container_name: homework4-sentinel-dashboard
+    restart: unless-stopped
+    ports:
+      - "8858:8858"
+
+  seckill-inventory-service:
+    profiles: ["apps"]
+    build:
+      context: .
+      dockerfile: docker/java-service/Dockerfile
+      args:
+        MODULE_NAME: seckill-inventory-service
+    container_name: homework4-seckill-inventory-service
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      nacos:
+        condition: service_started
+      sentinel-dashboard:
+        condition: service_started
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SENTINEL_DASHBOARD_ADDR: sentinel-dashboard:8858
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      INVENTORY_DB_URL: jdbc:mysql://mysql:3306/inventory_db?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    ports:
+      - "8081:8081"
+
+  seckill-order-service:
+    profiles: ["apps"]
+    build:
+      context: .
+      dockerfile: docker/java-service/Dockerfile
+      args:
+        MODULE_NAME: seckill-order-service
+    container_name: homework4-seckill-order-service
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      shardingsphere-proxy:
+        condition: service_healthy
+      nacos:
+        condition: service_started
+      sentinel-dashboard:
+        condition: service_started
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SENTINEL_DASHBOARD_ADDR: sentinel-dashboard:8858
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ORDER_DB_URL: jdbc:mysql://shardingsphere-proxy:3307/seckill_proxy?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    ports:
+      - "8082:8082"
+
+  seckill-payment-service:
+    profiles: ["apps"]
+    build:
+      context: .
+      dockerfile: docker/java-service/Dockerfile
+      args:
+        MODULE_NAME: seckill-payment-service
+    container_name: homework4-seckill-payment-service
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      nacos:
+        condition: service_started
+      sentinel-dashboard:
+        condition: service_started
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SENTINEL_DASHBOARD_ADDR: sentinel-dashboard:8858
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PAYMENT_DB_URL: jdbc:mysql://mysql:3306/payment_db?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    ports:
+      - "8083:8083"
+
+  seckill-seckill-service:
+    profiles: ["apps"]
+    build:
+      context: .
+      dockerfile: docker/java-service/Dockerfile
+      args:
+        MODULE_NAME: seckill-seckill-service
+    container_name: homework4-seckill-seckill-service
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      nacos:
+        condition: service_started
+      sentinel-dashboard:
+        condition: service_started
+      seckill-inventory-service:
+        condition: service_started
+      seckill-order-service:
+        condition: service_started
+      seckill-payment-service:
+        condition: service_started
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SENTINEL_DASHBOARD_ADDR: sentinel-dashboard:8858
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SECKILL_DB_URL: jdbc:mysql://mysql:3306/seckill_demo?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+      INVENTORY_BASE_URL: http://seckill-inventory-service:8081
+      ORDER_BASE_URL: http://seckill-order-service:8082
+      PAYMENT_BASE_URL: http://seckill-payment-service:8083
+    ports:
+      - "8080:8080"
+
+  gateway-service:
+    profiles: ["apps"]
+    build:
+      context: .
+      dockerfile: docker/java-service/Dockerfile
+      args:
+        MODULE_NAME: gateway-service
+    container_name: homework4-gateway-service
+    restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_started
+      sentinel-dashboard:
+        condition: service_started
+      seckill-seckill-service:
+        condition: service_started
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SENTINEL_DASHBOARD_ADDR: sentinel-dashboard:8858
+    ports:
+      - "8084:8084"
 
 volumes:
-  mysql-master-data:
-  mysql-slave-data:
+  mysql_data:
+  redis_data:
+  kafka_data:

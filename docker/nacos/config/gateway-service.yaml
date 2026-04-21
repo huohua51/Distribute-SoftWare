@@ -1,0 +1,5 @@
+app:
+  runtime:
+    message: hello from nacos gateway-service
+  limit:
+    gateway-route-qps: 25

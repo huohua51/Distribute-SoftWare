@@ -1,183 +1,133 @@
-# 高并发读实验项目
+# 高并发秒杀下单系统
 
-本项目用于完成"高并发读"作业，包含以下六部分：
+这是一个基于 `Spring Boot`、`Spring Cloud Alibaba`、`Redis`、`Kafka` 和 `MySQL` 搭建的高并发秒杀下单系统。项目从一个单体秒杀服务开始实现，后面又按照作业要求继续扩展，逐步加入了注册发现、网关、限流熔断、分库分表，以及订单、库存、支付三个服务之间的消息协同。
 
-1. **容器环境**：Dockerfile + docker-compose 启动所有服务。
-2. **负载均衡**：Nginx 反向代理两个后端实例，支持多种算法。
-3. **动静分离**：静态页面由 Nginx 直接提供，接口请求转发给后端。
-4. **分布式缓存**：Redis 缓存商品详情，处理穿透、击穿、雪崩。
-5. **读写分离**：MySQL 主从复制，写入走 Master，读取走 Slave。
-6. **商品搜索**：ElasticSearch 全文搜索商品。
+这个项目主要想解决的，其实就是秒杀场景里最典型的几个问题：请求量大、库存容易超卖、订单创建压力集中、重复下单难控制，以及服务拆分之后的数据一致性问题。围绕这些问题，项目做了一套比较完整的实现。
 
-## 一、项目结构
+目前已经完成的核心能力包括：
+
+- 商品库存放在 Redis 中，先在缓存层做预扣减，尽量把高并发流量挡在数据库前面
+- 下单请求通过 Kafka 异步处理，避免大量请求直接打到订单表
+- 订单 ID 使用雪花算法生成，保证全局唯一
+- 支持通过 `orderId` 查询单个订单，也支持通过 `userId` 查询用户订单
+- 对重复秒杀做了幂等控制，同一用户对同一商品只能成功抢一次
+- 通过“Redis 预扣减 + MySQL 最终扣减 + 失败回补”的方式尽量避免超卖
+- 提供了 `ShardingSphere-Proxy` 的分库分表方案
+- 在 `homework5` 版本中，把库存、订单、支付拆成独立服务，并增加消息驱动的一致性处理
+- 同时接入了 `Nacos`、`Gateway`、`Sentinel` 和 `JMeter`，方便做服务治理和压测验证
+
+## 技术栈
+
+项目用到的主要技术如下：
+
+- `Spring Boot 3`
+- `Spring Cloud Gateway`
+- `Spring Cloud Alibaba Nacos`
+- `Spring Cloud Alibaba Sentinel`
+- `Redis`
+- `Kafka`
+- `MySQL`
+- `MyBatis`
+- `Lombok`
+
+## 这个项目是怎么工作的
+
+整体流程可以分成两个阶段来看：**用户请求进入系统时的快速处理**，以及**后台异步完成真正落单**。
+
+### 1. 商品初始化
+
+在开始秒杀之前，管理员会先把商品信息和库存写入 MySQL，同时把可用库存同步到 Redis。这样做的目的是让后续高并发请求尽量先访问 Redis，而不是直接访问数据库。
+
+### 2. 用户发起秒杀请求
+
+当用户提交秒杀请求后，系统不会马上去数据库里扣库存、写订单，而是先在 Redis 里完成第一轮校验和预处理。
+
+这一层使用了 Lua 脚本，主要是为了保证几个操作在 Redis 里原子执行，不会在高并发下出现并发竞争问题。Lua 脚本会一次性完成下面几件事：
+
+- 判断这个用户之前有没有抢过这个商品
+- 判断当前商品库存是否还有剩余
+- 如果库存足够，就先把 Redis 中的库存减 1
+- 同时记录这个用户已经抢购过的标记
+
+只有 Lua 脚本执行成功，请求才会继续往下走；如果库存不足，或者用户已经抢购过，系统会直接返回失败。
+
+### 3. 生成订单号并投递消息
+
+如果 Redis 预扣减成功，服务端会先生成一个雪花订单 ID，然后把这次下单请求作为一条消息发送到 Kafka。
+
+这样做的目的是把“用户请求是否通过”和“订单真正写入数据库”这两件事拆开。前者要求尽快返回，后者可以由后台慢慢处理。这样可以明显减轻数据库和订单服务的瞬时压力，也更适合高并发场景。
+
+### 4. Kafka 消费者异步创建订单
+
+Kafka 的消费者会异步消费下单消息，并执行真正的落单流程。这里主要包含几步：
+
+- 先记录消息处理状态，防止消息被重复消费
+- 扣减 MySQL 中的真实库存
+- 创建订单记录
+- 更新订单状态
+
+也就是说，Redis 的库存扣减只是“先占位”，真正决定订单是否成立的，还是数据库里的库存扣减和订单写入结果。
+
+### 5. 异步下单失败时的补偿
+
+如果在异步处理过程中出现失败，比如数据库库存扣减失败、订单创建异常、消息重复等情况，系统会执行补偿逻辑：
+
+- 把 Redis 中之前预扣掉的库存加回来
+- 删除用户抢购标记
+
+这样做是为了保证 Redis 和 MySQL 之间不要长期不一致，也避免因为异步失败导致“明明没下单成功，但库存和资格已经被占用”的情况。
+
+## 为什么要这样设计
+
+如果秒杀请求一进来就直接访问 MySQL，那么在并发稍微高一点的时候，数据库就会成为最先扛不住的部分。尤其是库存扣减、订单写入、重复下单判断这几类操作，本身就比较敏感，很容易出现锁竞争和性能瓶颈。
+
+所以这个项目采用了比较常见的一种思路：
+
+- **把最前面一层拦截放到 Redis**
+- **把真正的下单动作放到消息队列后面异步做**
+- **用数据库做最终结果兜底**
+- **用补偿机制修正异常情况**
+
+这样做不代表系统一定完全强一致，但在秒杀这种“先扛流量、再保证最终正确”的场景下，是比较合理的一种工程实现。
+
+## 幂等和一致性是怎么处理的
+
+这部分是秒杀系统里比较关键的地方。
+
+### 幂等控制
+
+项目里一共做了三层幂等保护，不是只依赖某一个地方。
+
+第一层是在 Redis。  
+系统会根据 `userId + productId` 生成抢购标记。如果这个用户已经抢过同一个商品，那么 Lua 脚本会直接拦截，不再继续执行。
+
+第二层是在数据库。  
+`orders` 表对 `(user_id, product_id)` 建了唯一索引。这样即使前面因为异常情况没有完全拦住，到了数据库这一层仍然能避免重复订单落库。
+
+第三层是在消息消费端。  
+Kafka 消费者会记录消息 ID，并对 `order_task.message_id` 做唯一约束。这样即使消息重复投递或重复消费，也不会把同一条下单消息执行多次。
+
+### 防止超卖
+
+防超卖也不是只做一步，而是前后结合。
+
+首先，请求进入系统后，Redis 会先预扣减库存，这一步会把大量无效或抢不到的请求挡掉。  
+其次，MySQL 扣减库存时，不是简单做减法，而是带条件更新，例如要求 `available_stock >= quantity` 才允许扣减成功。  
+最后，如果数据库扣减失败，系统还会把 Redis 的库存补回去，并删除用户抢购标记。
+
+也就是说，这里不是单纯依赖缓存，也不是单纯依赖数据库，而是用缓存抗流量、用数据库保底、用补偿来修正异常。
+
+## 项目结构
+
+当前秒杀入口服务的核心代码主要放在下面这个目录中：
 
 ```text
-high-concurrency-demo
-├─ backend
-│  ├─ Dockerfile
-│  ├─ package.json
-│  └─ server.js
-├─ mysql
-│  ├─ master/my.cnf
-│  ├─ slave/my.cnf
-│  ├─ init/01-schema.sql
-│  └─ slave-init/01-start-replication.sh
-├─ nginx
-│  ├─ nginx.conf
-│  └─ html
-│     ├─ index.html
-│     ├─ style.css
-│     └─ app.js
-├─ docker-compose.yml
-└─ README.md
-```
-
-## 二、服务说明
-
-| 服务 | 容器名 | 端口 | 说明 |
-|------|--------|------|------|
-| Redis | hc-redis | 6379 | 缓存 |
-| MySQL Master | hc-mysql-master | 3306 | 主库（写） |
-| MySQL Slave | hc-mysql-slave | 3307 | 从库（读） |
-| ElasticSearch | hc-elasticsearch | 9200 | 全文搜索 |
-| 后端 1 | hc-backend-1 | 8081 | 业务服务 |
-| 后端 2 | hc-backend-2 | 8082 | 业务服务 |
-| Nginx | hc-nginx | 80 | 反向代理入口 |
-
-## 三、启动方式
-
-```bash
-docker compose up --build
-```
-
-启动后需要手动配置 MySQL 主从复制（首次）：
-
-```bash
-# 进入从库容器
-docker exec -it hc-mysql-slave bash
-
-# 在从库中执行
-mysql -u root -prootpass -e "
-CHANGE REPLICATION SOURCE TO
-  SOURCE_HOST='mysql-master',
-  SOURCE_USER='repl',
-  SOURCE_PASSWORD='repl_pass',
-  SOURCE_AUTO_POSITION=1;
-START REPLICA;
-"
-
-# 验证复制状态
-mysql -u root -prootpass -e "SHOW REPLICA STATUS\G"
-```
-
-看到 `Replica_IO_Running: Yes` 和 `Replica_SQL_Running: Yes` 即表示主从复制成功。
-
-访问：
-
-- 前端页面：[http://localhost](http://localhost)
-- 健康检查：[http://localhost/api/health](http://localhost/api/health)
-
-停止服务：
-
-```bash
-docker compose down
-```
-
-清除数据卷（重置数据库）：
-
-```bash
-docker compose down -v
-```
-
-## 四、功能验证
-
-### 1. 负载均衡
-
-多次访问 `/api/products/1`，观察返回的 `instance` 在 `backend-1` 和 `backend-2` 之间交替。
-
-### 2. 动静分离
-
-- 浏览器访问 `http://localhost/` → Nginx 返回静态页面
-- 访问 `http://localhost/api/products/1` → Nginx 转发到后端
-
-### 3. 分布式缓存
-
-- 第一次请求：`source` 为 `mysql-slave-rebuild-cache`（从 MySQL 从库读取后写入 Redis）
-- 第二次请求：`source` 为 `redis-cache`（直接命中缓存）
-- 请求不存在的商品：返回 404，写入空值缓存防止穿透
-
-### 4. MySQL 读写分离
-
-页面上点击「执行读写分离测试」按钮，或直接访问：
-
-```bash
-curl http://localhost/api/rw-test
-```
-
-返回结果会显示：
-- 写入目标：`mysql-master`
-- Master 读取：找到数据
-- Slave 读取：找到数据（如果主从复制已同步）
-
-也可以用「写入新商品 (Master)」按钮向主库写入数据，然后查询验证数据已同步到从库。
-
-### 5. ElasticSearch 搜索
-
-在页面搜索框输入关键词（如 `cache`、`nginx`、`mysql`），点击搜索按钮。
-
-或直接访问：
-
-```bash
-curl "http://localhost/api/search?q=cache"
-```
-
-## 五、API 接口
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | /api/health | 健康检查（含各组件状态） |
-| GET | /api/products | 获取所有商品（从 Slave 读） |
-| GET | /api/products/:id | 获取单个商品（Redis 缓存 + Slave 读） |
-| POST | /api/products | 新增商品（写入 Master） |
-| PUT | /api/products/:id | 更新商品（写入 Master） |
-| GET | /api/search?q=xxx | ElasticSearch 全文搜索 |
-| GET | /api/rw-test | 读写分离自动化测试 |
-
-## 六、切换负载均衡算法
-
-编辑 `nginx/nginx.conf` 中的 `upstream backend_pool`，可选：
-
-- 默认轮询（Round Robin）
-- `least_conn`（最少连接）
-- `ip_hash`（IP 哈希）
-
-修改后重启 Nginx：
-
-```bash
-docker compose restart nginx
-```
-
-## 七、JMeter 测试建议
-
-创建线程组分别测试：
-
-1. 静态资源：`GET http://localhost/style.css`
-2. 动态接口：`GET http://localhost/api/products/1`
-3. 搜索接口：`GET http://localhost/api/search?q=cache`
-
-推荐参数：线程数 50~100，Ramp-Up 1~5 秒，循环 20 次。
-
-查看日志：
-
-```bash
-docker compose logs -f backend1 backend2
-```
-
-## 八、实验结论
-
-- 通过 Docker Compose 将 Redis、MySQL 主从、ElasticSearch、后端服务和 Nginx 统一容器化部署。
-- Nginx 对两个后端实例进行反向代理和负载均衡，分散请求压力。
-- 静态资源由 Nginx 直接处理，动态接口转发给后端，实现动静分离。
-- Redis 缓存商品详情，通过空值缓存、分布式锁、随机过期时间缓解穿透、击穿和雪崩。
-- MySQL 主从复制实现读写分离：写操作走 Master，读操作走 Slave，降低主库压力。
-- ElasticSearch 提供全文搜索功能，支持按商品名称和描述模糊匹配。
+seckill-seckill-service/src/main/java/com/example/seckill
+├── config
+├── controller
+├── dto
+├── entity
+├── mapper
+├── mq
+├── service
+└── support
