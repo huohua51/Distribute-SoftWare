@@ -1,0 +1,17 @@
+spring:
+  datasource:
+    url: jdbc:mysql://mysql:3306/seckill_demo?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+
+app:
+  runtime:
+    message: hello from nacos seckill-service
+    payment-enabled: true
+  limit:
+    seckill-qps: 20
+    query-qps: 60
+  services:
+    inventory-url: http://seckill-inventory-service:8081
+    order-url: http://seckill-order-service:8082
+    payment-url: http://seckill-payment-service:8083

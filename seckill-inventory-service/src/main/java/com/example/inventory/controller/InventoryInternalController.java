@@ -1,5 +1,6 @@
 package com.example.inventory.controller;
 
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.example.common.dto.InventoryInitRequest;
 import com.example.common.dto.InventoryReleaseRequest;
 import com.example.common.dto.InventoryReserveRequest;
@@ -25,23 +26,27 @@ public class InventoryInternalController {
     }
 
     @PostMapping("/products/init")
+    @SentinelResource("inventoryInit")
     public StockResponse initStock(@RequestBody @Valid InventoryInitRequest request) {
         ProductStockDO stock = inventoryService.initStock(request.productId(), request.stock());
         return new StockResponse(stock.getProductId(), null, stock.getAvailableStock(), inventoryService.getRedisStock(stock.getProductId()));
     }
 
     @GetMapping("/products/{productId}")
+    @SentinelResource("inventoryQuery")
     public StockResponse queryStock(@PathVariable Long productId) {
         ProductStockDO stock = inventoryService.getStock(productId);
         return new StockResponse(stock.getProductId(), null, stock.getAvailableStock(), inventoryService.getRedisStock(productId));
     }
 
     @PostMapping("/reservations")
+    @SentinelResource("inventoryReserve")
     public void reserve(@RequestBody @Valid InventoryReserveRequest request) {
         inventoryService.reserveStock(request.userId(), request.productId(), request.orderId());
     }
 
     @PostMapping("/reservations/release")
+    @SentinelResource("inventoryRelease")
     public void release(@RequestBody @Valid InventoryReleaseRequest request) {
         inventoryService.releaseReservation(request.userId(), request.productId(), request.orderId());
     }

@@ -15,7 +15,7 @@ public class InventoryRemoteClient {
     private final String baseUrl;
 
     public InventoryRemoteClient(RestTemplate restTemplate,
-                                 @Value("${app.services.inventory-url:http://localhost:8081}") String baseUrl) {
+                                 @Value("${app.services.inventory-url:http://seckill-inventory-service}") String baseUrl) {
         this.restTemplate = restTemplate;
         this.baseUrl = baseUrl;
     }

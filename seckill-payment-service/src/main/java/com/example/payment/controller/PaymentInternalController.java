@@ -1,5 +1,6 @@
 package com.example.payment.controller;
 
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.example.common.dto.PayOrderRequest;
 import com.example.common.dto.PayOrderResponse;
 import com.example.payment.service.PaymentService;
@@ -20,6 +21,7 @@ public class PaymentInternalController {
     }
 
     @PostMapping
+    @SentinelResource("paymentPay")
     public PayOrderResponse pay(@RequestBody @Valid PayOrderRequest request) {
         return paymentService.pay(request);
     }

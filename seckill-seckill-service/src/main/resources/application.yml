@@ -2,21 +2,19 @@ server:
   port: 8080
 
 spring:
-  application:
-    name: homework4-seckill
   datasource:
-    url: jdbc:mysql://localhost:3306/seckill_demo?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
-    username: root
-    password: root
+    url: ${SECKILL_DB_URL:jdbc:mysql://localhost:3306/seckill_demo?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai}
+    username: ${SECKILL_DB_USERNAME:root}
+    password: ${SECKILL_DB_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
       database: 0
       timeout: 3s
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -30,16 +28,33 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
     listener:
       ack-mode: batch
+  cloud:
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD_ADDR:localhost:8858}
+      eager: true
 
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,sentinel
+
 app:
   snowflake:
     worker-id: 1
     datacenter-id: 1
+  runtime:
+    message: seckill local runtime message
+    payment-enabled: ${PAYMENT_ENABLED:true}
+  limit:
+    seckill-qps: ${SECKILL_QPS:20}
+    query-qps: ${SECKILL_QUERY_QPS:60}
   services:
-    inventory-url: http://localhost:8081
-    order-url: http://localhost:8082
-    payment-url: http://localhost:8083
+    inventory-url: ${INVENTORY_BASE_URL:http://seckill-inventory-service}
+    order-url: ${ORDER_BASE_URL:http://seckill-order-service}
+    payment-url: ${PAYMENT_BASE_URL:http://seckill-payment-service}

@@ -17,7 +17,7 @@ public class OrderRemoteClient {
     private final String baseUrl;
 
     public OrderRemoteClient(RestTemplate restTemplate,
-                             @Value("${app.services.order-url:http://localhost:8082}") String baseUrl) {
+                             @Value("${app.services.order-url:http://seckill-order-service}") String baseUrl) {
         this.restTemplate = restTemplate;
         this.baseUrl = baseUrl;
     }

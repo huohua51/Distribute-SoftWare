@@ -83,6 +83,173 @@ services:
       timeout: 5s
       retries: 20
 
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: homework4-nacos
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      PREFER_HOST_MODE: hostname
+      NACOS_AUTH_ENABLE: "false"
+      JVM_XMS: 256m
+      JVM_XMX: 256m
+      JVM_XMN: 128m
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+
+  sentinel-dashboard:
+    build:
+      context: .
+      dockerfile: docker/sentinel-dashboard/Dockerfile
+    container_name: homework4-sentinel-dashboard
+    restart: unless-stopped
+    ports:
+      - "8858:8858"
+
+  seckill-inventory-service:
+    profiles: ["apps"]
+    build:
+      context: .
+      dockerfile: docker/java-service/Dockerfile
+      args:
+        MODULE_NAME: seckill-inventory-service
+    container_name: homework4-seckill-inventory-service
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      nacos:
+        condition: service_started
+      sentinel-dashboard:
+        condition: service_started
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SENTINEL_DASHBOARD_ADDR: sentinel-dashboard:8858
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      INVENTORY_DB_URL: jdbc:mysql://mysql:3306/inventory_db?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    ports:
+      - "8081:8081"
+
+  seckill-order-service:
+    profiles: ["apps"]
+    build:
+      context: .
+      dockerfile: docker/java-service/Dockerfile
+      args:
+        MODULE_NAME: seckill-order-service
+    container_name: homework4-seckill-order-service
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      shardingsphere-proxy:
+        condition: service_healthy
+      nacos:
+        condition: service_started
+      sentinel-dashboard:
+        condition: service_started
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SENTINEL_DASHBOARD_ADDR: sentinel-dashboard:8858
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ORDER_DB_URL: jdbc:mysql://shardingsphere-proxy:3307/seckill_proxy?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    ports:
+      - "8082:8082"
+
+  seckill-payment-service:
+    profiles: ["apps"]
+    build:
+      context: .
+      dockerfile: docker/java-service/Dockerfile
+      args:
+        MODULE_NAME: seckill-payment-service
+    container_name: homework4-seckill-payment-service
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      nacos:
+        condition: service_started
+      sentinel-dashboard:
+        condition: service_started
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SENTINEL_DASHBOARD_ADDR: sentinel-dashboard:8858
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PAYMENT_DB_URL: jdbc:mysql://mysql:3306/payment_db?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    ports:
+      - "8083:8083"
+
+  seckill-seckill-service:
+    profiles: ["apps"]
+    build:
+      context: .
+      dockerfile: docker/java-service/Dockerfile
+      args:
+        MODULE_NAME: seckill-seckill-service
+    container_name: homework4-seckill-seckill-service
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      nacos:
+        condition: service_started
+      sentinel-dashboard:
+        condition: service_started
+      seckill-inventory-service:
+        condition: service_started
+      seckill-order-service:
+        condition: service_started
+      seckill-payment-service:
+        condition: service_started
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SENTINEL_DASHBOARD_ADDR: sentinel-dashboard:8858
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SECKILL_DB_URL: jdbc:mysql://mysql:3306/seckill_demo?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+      INVENTORY_BASE_URL: http://seckill-inventory-service:8081
+      ORDER_BASE_URL: http://seckill-order-service:8082
+      PAYMENT_BASE_URL: http://seckill-payment-service:8083
+    ports:
+      - "8080:8080"
+
+  gateway-service:
+    profiles: ["apps"]
+    build:
+      context: .
+      dockerfile: docker/java-service/Dockerfile
+      args:
+        MODULE_NAME: gateway-service
+    container_name: homework4-gateway-service
+    restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_started
+      sentinel-dashboard:
+        condition: service_started
+      seckill-seckill-service:
+        condition: service_started
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SENTINEL_DASHBOARD_ADDR: sentinel-dashboard:8858
+    ports:
+      - "8084:8084"
+
 volumes:
   mysql_data:
   redis_data:

@@ -1,5 +1,6 @@
 package com.example.order.controller;
 
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.example.common.dto.OrderExistsResponse;
 import com.example.common.dto.OrderQueryResponse;
 import com.example.order.entity.OrderDO;
@@ -22,6 +23,7 @@ public class OrderInternalController {
     }
 
     @GetMapping("/{orderId}")
+    @SentinelResource("orderFindByOrderId")
     public OrderQueryResponse findByOrderId(@PathVariable Long orderId) {
         OrderDO order = orderService.findByOrderId(orderId);
         if (order == null) {
@@ -39,11 +41,13 @@ public class OrderInternalController {
     }
 
     @GetMapping
+    @SentinelResource("orderFindByUserId")
     public List<OrderQueryResponse> findByUserId(@RequestParam Long userId) {
         return orderService.findByUserId(userId);
     }
 
     @GetMapping("/exists")
+    @SentinelResource("orderExists")
     public OrderExistsResponse exists(@RequestParam Long userId, @RequestParam Long productId) {
         OrderDO order = orderService.findByUserIdAndProductId(userId, productId);
         return new OrderExistsResponse(order != null, order == null ? null : order.getOrderId(), order == null ? null : order.getStatus());

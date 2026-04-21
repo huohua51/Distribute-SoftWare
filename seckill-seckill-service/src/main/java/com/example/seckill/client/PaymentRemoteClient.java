@@ -13,7 +13,7 @@ public class PaymentRemoteClient {
     private final String baseUrl;
 
     public PaymentRemoteClient(RestTemplate restTemplate,
-                               @Value("${app.services.payment-url:http://localhost:8083}") String baseUrl) {
+                               @Value("${app.services.payment-url:http://seckill-payment-service}") String baseUrl) {
         this.restTemplate = restTemplate;
         this.baseUrl = baseUrl;
     }

@@ -1,75 +1,125 @@
 # 高并发秒杀下单系统
 
-这是一个从 0 搭建的 `Spring Boot + Redis + Kafka + MySQL` 秒杀下单示例，满足课程作业里提到的核心要求：
+这是一个基于 `Spring Boot`、`Spring Cloud Alibaba`、`Redis`、`Kafka` 和 `MySQL` 搭建的高并发秒杀下单系统。项目从一个单体秒杀服务开始实现，后面又按照作业要求继续扩展，逐步加入了注册发现、网关、限流熔断、分库分表，以及订单、库存、支付三个服务之间的消息协同。
 
-- Redis 缓存库存，先在缓存层预扣减
-- Kafka 异步创建订单，削峰填谷
-- 雪花算法生成订单 ID
-- 支持按 `userId` 和 `orderId` 查询订单
-- 幂等控制：同一用户同一商品只允许秒杀一次
-- 数据一致性：缓存预扣减 + 数据库最终扣减 + 失败补偿，避免超卖
-- 选做：已提供 `ShardingSphere-Proxy` 分库分表实现
-- homework5：已增强为订单、库存、支付独立服务的消息一致性版本
+这个项目主要想解决的，其实就是秒杀场景里最典型的几个问题：请求量大、库存容易超卖、订单创建压力集中、重复下单难控制，以及服务拆分之后的数据一致性问题。围绕这些问题，项目做了一套比较完整的实现。
+
+目前已经完成的核心能力包括：
+
+- 商品库存放在 Redis 中，先在缓存层做预扣减，尽量把高并发流量挡在数据库前面
+- 下单请求通过 Kafka 异步处理，避免大量请求直接打到订单表
+- 订单 ID 使用雪花算法生成，保证全局唯一
+- 支持通过 `orderId` 查询单个订单，也支持通过 `userId` 查询用户订单
+- 对重复秒杀做了幂等控制，同一用户对同一商品只能成功抢一次
+- 通过“Redis 预扣减 + MySQL 最终扣减 + 失败回补”的方式尽量避免超卖
+- 提供了 `ShardingSphere-Proxy` 的分库分表方案
+- 在 `homework5` 版本中，把库存、订单、支付拆成独立服务，并增加消息驱动的一致性处理
+- 同时接入了 `Nacos`、`Gateway`、`Sentinel` 和 `JMeter`，方便做服务治理和压测验证
 
 ## 技术栈
 
+项目用到的主要技术如下：
+
 - `Spring Boot 3`
+- `Spring Cloud Gateway`
+- `Spring Cloud Alibaba Nacos`
+- `Spring Cloud Alibaba Sentinel`
 - `Redis`
 - `Kafka`
 - `MySQL`
 - `MyBatis`
 - `Lombok`
 
-## 业务流程
+## 这个项目是怎么工作的
 
-1. 管理员先初始化商品库存，写入 MySQL 和 Redis。
-2. 用户发起秒杀请求。
-3. Redis Lua 脚本原子执行：
-   - 校验用户是否已抢购
-   - 校验库存是否大于 0
-   - 预扣减 Redis 库存
-   - 写入用户抢购标记
-4. 服务端生成雪花订单 ID，将下单消息投递到 Kafka。
-5. Kafka 消费者异步处理：
-   - 记录消息任务表，避免重复消费
-   - 扣减 MySQL 库存
-   - 创建订单
-   - 回写订单状态
-6. 如果异步落单失败，则执行缓存补偿，恢复 Redis 库存与用户抢购标记。
+整体流程可以分成两个阶段来看：**用户请求进入系统时的快速处理**，以及**后台异步完成真正落单**。
 
-## 防重复与一致性设计
+### 1. 商品初始化
 
-### 幂等性
+在开始秒杀之前，管理员会先把商品信息和库存写入 MySQL，同时把可用库存同步到 Redis。这样做的目的是让后续高并发请求尽量先访问 Redis，而不是直接访问数据库。
 
-- Redis 使用 `userId + productId` 标记，拦截重复秒杀请求
-- MySQL `orders` 表建立 `(user_id, product_id)` 唯一索引
-- Kafka 消费端使用 `order_task.message_id` 唯一约束，防止重复消费
+### 2. 用户发起秒杀请求
 
-### 防超卖
+当用户提交秒杀请求后，系统不会马上去数据库里扣库存、写订单，而是先在 Redis 里完成第一轮校验和预处理。
 
-- Redis 预扣减库存，拦住大部分并发流量
-- MySQL 更新库存时使用 `available_stock >= quantity` 条件扣减
-- 当数据库扣减失败时，对 Redis 做库存回补和用户标记回滚
+这一层使用了 Lua 脚本，主要是为了保证几个操作在 Redis 里原子执行，不会在高并发下出现并发竞争问题。Lua 脚本会一次性完成下面几件事：
+
+- 判断这个用户之前有没有抢过这个商品
+- 判断当前商品库存是否还有剩余
+- 如果库存足够，就先把 Redis 中的库存减 1
+- 同时记录这个用户已经抢购过的标记
+
+只有 Lua 脚本执行成功，请求才会继续往下走；如果库存不足，或者用户已经抢购过，系统会直接返回失败。
+
+### 3. 生成订单号并投递消息
+
+如果 Redis 预扣减成功，服务端会先生成一个雪花订单 ID，然后把这次下单请求作为一条消息发送到 Kafka。
+
+这样做的目的是把“用户请求是否通过”和“订单真正写入数据库”这两件事拆开。前者要求尽快返回，后者可以由后台慢慢处理。这样可以明显减轻数据库和订单服务的瞬时压力，也更适合高并发场景。
+
+### 4. Kafka 消费者异步创建订单
+
+Kafka 的消费者会异步消费下单消息，并执行真正的落单流程。这里主要包含几步：
+
+- 先记录消息处理状态，防止消息被重复消费
+- 扣减 MySQL 中的真实库存
+- 创建订单记录
+- 更新订单状态
+
+也就是说，Redis 的库存扣减只是“先占位”，真正决定订单是否成立的，还是数据库里的库存扣减和订单写入结果。
+
+### 5. 异步下单失败时的补偿
+
+如果在异步处理过程中出现失败，比如数据库库存扣减失败、订单创建异常、消息重复等情况，系统会执行补偿逻辑：
+
+- 把 Redis 中之前预扣掉的库存加回来
+- 删除用户抢购标记
+
+这样做是为了保证 Redis 和 MySQL 之间不要长期不一致，也避免因为异步失败导致“明明没下单成功，但库存和资格已经被占用”的情况。
+
+## 为什么要这样设计
+
+如果秒杀请求一进来就直接访问 MySQL，那么在并发稍微高一点的时候，数据库就会成为最先扛不住的部分。尤其是库存扣减、订单写入、重复下单判断这几类操作，本身就比较敏感，很容易出现锁竞争和性能瓶颈。
+
+所以这个项目采用了比较常见的一种思路：
+
+- **把最前面一层拦截放到 Redis**
+- **把真正的下单动作放到消息队列后面异步做**
+- **用数据库做最终结果兜底**
+- **用补偿机制修正异常情况**
+
+这样做不代表系统一定完全强一致，但在秒杀这种“先扛流量、再保证最终正确”的场景下，是比较合理的一种工程实现。
+
+## 幂等和一致性是怎么处理的
+
+这部分是秒杀系统里比较关键的地方。
+
+### 幂等控制
+
+项目里一共做了三层幂等保护，不是只依赖某一个地方。
+
+第一层是在 Redis。  
+系统会根据 `userId + productId` 生成抢购标记。如果这个用户已经抢过同一个商品，那么 Lua 脚本会直接拦截，不再继续执行。
+
+第二层是在数据库。  
+`orders` 表对 `(user_id, product_id)` 建了唯一索引。这样即使前面因为异常情况没有完全拦住，到了数据库这一层仍然能避免重复订单落库。
+
+第三层是在消息消费端。  
+Kafka 消费者会记录消息 ID，并对 `order_task.message_id` 做唯一约束。这样即使消息重复投递或重复消费，也不会把同一条下单消息执行多次。
+
+### 防止超卖
+
+防超卖也不是只做一步，而是前后结合。
+
+首先，请求进入系统后，Redis 会先预扣减库存，这一步会把大量无效或抢不到的请求挡掉。  
+其次，MySQL 扣减库存时，不是简单做减法，而是带条件更新，例如要求 `available_stock >= quantity` 才允许扣减成功。  
+最后，如果数据库扣减失败，系统还会把 Redis 的库存补回去，并删除用户抢购标记。
+
+也就是说，这里不是单纯依赖缓存，也不是单纯依赖数据库，而是用缓存抗流量、用数据库保底、用补偿来修正异常。
 
 ## 项目结构
 
-```text
-homework4
-├─ docs
-├─ docker
-├─ load
-├─ nginx
-├─ scripts
-├─ seckill-common
-├─ seckill-user-service
-├─ seckill-product-service
-├─ seckill-inventory-service
-├─ seckill-order-service
-├─ seckill-payment-service
-└─ seckill-seckill-service
-```
-
-当前已完成的核心代码位于：
+当前秒杀入口服务的核心代码主要放在下面这个目录中：
 
 ```text
 seckill-seckill-service/src/main/java/com/example/seckill
@@ -81,175 +131,3 @@ seckill-seckill-service/src/main/java/com/example/seckill
 ├── mq
 ├── service
 └── support
-```
-
-## 运行前准备
-
-确保本地已启动：
-
-- `MySQL 8+`
-- `Redis`
-- `Kafka`
-- `ShardingSphere-Proxy`（订单服务走分片库时使用）
-
-各服务默认端口：
-
-- `seckill-seckill-service`: `8080`
-- `seckill-inventory-service`: `8081`
-- `seckill-order-service`: `8082`
-- `seckill-payment-service`: `8083`
-
-网关服务配置在 `seckill-seckill-service/src/main/resources/application.yml`：
-
-- MySQL: `localhost:3306/seckill_demo`
-- Redis: `localhost:6379`
-- Kafka: `localhost:9092`
-
-
-## 建库建表
-
-先创建数据库：
-
-```sql
-create database seckill_demo default character set utf8mb4;
-```
-
-再执行：
-
-```text
-seckill-seckill-service/src/main/resources/schema.sql
-```
-
-## 启动项目
-
-```bash
-mvn -pl seckill-inventory-service spring-boot:run
-mvn -pl seckill-order-service spring-boot:run
-mvn -pl seckill-payment-service spring-boot:run
-mvn -pl seckill-seckill-service spring-boot:run
-```
-
-## Docker 一键启动中间件
-
-项目已提供 `docker-compose.yml`，可一键拉起：
-
-- `MySQL`
-- `Redis`
-- `Kafka`
-- `ShardingSphere-Proxy`
-
-启动命令：
-
-```bash
-docker compose up -d --build
-```
-
-启动后端口如下：
-
-- MySQL: `3306`
-- Redis: `6379`
-- Kafka: `9092`
-- ShardingSphere-Proxy: `3307`
-
-如果你要走订单分库分表版本，先启动 `ShardingSphere-Proxy`，再启动：
-
-```bash
-mvn -pl seckill-order-service spring-boot:run
-```
-
-订单服务会连接：
-
-- `jdbc:mysql://localhost:3307/seckill_proxy`
-
-## homework5 增强点
-
-当前已经补上：
-
-- `inventory-service` 独立服务，拥有自己的 `inventory_db`
-- `order-service` 独立服务，通过 `ShardingSphere-Proxy` 连接订单分片库
-- `payment-service` 独立服务，拥有自己的 `payment_db`
-- 秒杀入口服务通过 HTTP 调用库存、订单、支付服务
-- 下单后发送 `order-create-topic`
-- 订单服务创建订单后发送 `inventory-deduct-topic`
-- 库存服务消费后发送 `inventory-deduct-result-topic`
-- 支付服务支付成功后发送 `payment-result-topic`
-- 订单服务消费支付结果后更新订单状态为 `PAID`
-
-## 接口示例
-
-### 1. 初始化商品
-
-`POST /api/seckill/products`
-
-```json
-{
-  "productId": 1001,
-  "productName": "iPhone 16",
-  "stock": 20
-}
-```
-
-### 2. 查询库存
-
-`GET /api/seckill/products/1001/stock`
-
-### 3. 提交秒杀请求
-
-`POST /api/seckill/orders`
-
-```json
-{
-  "userId": 1,
-  "productId": 1001
-}
-```
-
-返回示例：
-
-```json
-{
-  "success": true,
-  "message": "秒杀请求已受理",
-  "data": {
-    "orderId": 1912345678901234567
-  }
-}
-```
-
-### 4. 按订单 ID 查询
-
-`GET /api/seckill/orders/{orderId}`
-
-如果订单已异步创建完成，会返回订单详情；若仍在处理中，会返回状态 `PROCESSING`。
-
-### 5. 按用户 ID 查询
-
-`GET /api/seckill/orders?userId=1`
-
-### 6. 支付订单
-
-`POST /api/seckill/orders/{orderId}/pay?userId=1&amountFen=100`
-
-## ShardingSphere 分库分表
-
-本项目已经提供 `ShardingSphere-Proxy` 方案，实现：
-
-- `orders` 按 `user_id` 分库
-- `orders` 按 `order_id` 分表
-
-使用方式：
-
-1. 执行分片初始化脚本：
-   - `docs/sharding/schema-base.sql`
-   - `docs/sharding/schema-order-ds-0.sql`
-   - `docs/sharding/schema-order-ds-1.sql`
-2. 使用 `docs/sharding/proxy-config.yaml` 启动 `ShardingSphere-Proxy`
-3. 通过分片 profile 启动应用：
-
-```bash
-mvn -pl seckill-seckill-service spring-boot:run -Dspring-boot.run.profiles=sharding
-```
-
-详细说明见：
-
-- `docs/sharding/README.md`

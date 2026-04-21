@@ -1,5 +1,7 @@
 package com.example.seckill.service.impl;
 
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
+import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.example.common.dto.CreateProductRequest;
 import com.example.common.dto.OrderQueryResponse;
 import com.example.common.dto.PayOrderRequest;
@@ -40,6 +42,8 @@ public class SeckillServiceImpl implements SeckillService {
     private final InventoryRemoteClient inventoryRemoteClient;
     private final OrderRemoteClient orderRemoteClient;
     private final PaymentRemoteClient paymentRemoteClient;
+    @Value("${app.runtime.payment-enabled:true}")
+    private boolean paymentEnabled;
 
     public SeckillServiceImpl(StringRedisTemplate redisTemplate,
                               KafkaTemplate<String, String> kafkaTemplate,
@@ -62,6 +66,7 @@ public class SeckillServiceImpl implements SeckillService {
     }
 
     @Override
+    @SentinelResource(value = "submitSeckillOrder", blockHandler = "handleSubmitOrderBlocked", fallback = "handleSubmitOrderFallback")
     public Long submitSeckillOrder(Long userId, Long productId) {
         userService.getOrCreateGuestUser(userId);
         ProductDO product = productService.getByProductId(productId);
@@ -99,6 +104,7 @@ public class SeckillServiceImpl implements SeckillService {
     }
 
     @Override
+    @SentinelResource(value = "queryOrderByOrderId", blockHandler = "handleQueryOrderBlocked")
     public OrderQueryResponse queryOrderByOrderId(Long orderId) {
         OrderQueryResponse order = orderRemoteClient.findByOrderId(orderId);
         if (order != null) {
@@ -143,7 +149,31 @@ public class SeckillServiceImpl implements SeckillService {
     }
 
     @Override
+    @SentinelResource(value = "payOrder", blockHandler = "handlePayOrderBlocked", fallback = "handlePayOrderFallback")
     public PayOrderResponse payOrder(Long orderId, Long userId, Long amountFen) {
+        if (!paymentEnabled) {
+            throw new BusinessException("支付能力已通过动态配置关闭");
+        }
         return paymentRemoteClient.pay(new PayOrderRequest(orderId, userId, amountFen));
+    }
+
+    public Long handleSubmitOrderBlocked(Long userId, Long productId, BlockException ex) {
+        throw new BusinessException("秒杀请求触发限流，请稍后重试");
+    }
+
+    public Long handleSubmitOrderFallback(Long userId, Long productId, Throwable ex) {
+        throw new BusinessException("秒杀服务暂时不可用: " + ex.getMessage());
+    }
+
+    public OrderQueryResponse handleQueryOrderBlocked(Long orderId, BlockException ex) {
+        throw new BusinessException("订单查询过于频繁，请稍后重试");
+    }
+
+    public PayOrderResponse handlePayOrderBlocked(Long orderId, Long userId, Long amountFen, BlockException ex) {
+        throw new BusinessException("支付请求已被熔断或限流，请稍后再试");
+    }
+
+    public PayOrderResponse handlePayOrderFallback(Long orderId, Long userId, Long amountFen, Throwable ex) {
+        throw new BusinessException("支付服务降级: " + ex.getMessage());
     }
 }

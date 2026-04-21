@@ -2,15 +2,13 @@ server:
   port: 8082
 
 spring:
-  application:
-    name: seckill-order-service
   datasource:
-    url: jdbc:mysql://localhost:3307/seckill_proxy?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
-    username: root
-    password: root
+    url: ${ORDER_DB_URL:jdbc:mysql://localhost:3307/seckill_proxy?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai}
+    username: ${ORDER_DB_USERNAME:root}
+    password: ${ORDER_DB_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -19,12 +17,27 @@ spring:
       auto-offset-reset: latest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+  cloud:
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD_ADDR:localhost:8858}
+      eager: true
 
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,sentinel
+
 app:
+  runtime:
+    message: order local runtime message
+  limit:
+    internal-qps: ${ORDER_INTERNAL_QPS:100}
   kafka:
     order-create-topic: order-create-topic
     inventory-deduct-topic: inventory-deduct-topic

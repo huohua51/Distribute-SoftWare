@@ -2,23 +2,36 @@ server:
   port: 8083
 
 spring:
-  application:
-    name: seckill-payment-service
   datasource:
-    url: jdbc:mysql://localhost:3306/payment_db?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
-    username: root
-    password: root
+    url: ${PAYMENT_DB_URL:jdbc:mysql://localhost:3306/payment_db?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai}
+    username: ${PAYMENT_DB_USERNAME:root}
+    password: ${PAYMENT_DB_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+  cloud:
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD_ADDR:localhost:8858}
+      eager: true
 
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,sentinel
+
 app:
+  runtime:
+    message: payment local runtime message
+  limit:
+    internal-qps: ${PAYMENT_INTERNAL_QPS:50}
   kafka:
     payment-result-topic: payment-result-topic
